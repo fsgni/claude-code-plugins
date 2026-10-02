@@ -1,0 +1,14 @@
+{
+  "name": "fsgni",
+  "owner": { "name": "fsgni" },
+  "metadata": {
+    "description": "fsgni's Claude Code plugins"
+  },
+  "plugins": [
+    {
+      "name": "context-meter",
+      "source": "./plugins/context-meter",
+      "description": "Keeps the context window's fill and the plan's usage limits at the end of the hint line under the prompt, as Nerd Font icons and bars"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Laid by Claude Code when it loads a plugin from a folder you own
+plugins/*/tsconfig.json
