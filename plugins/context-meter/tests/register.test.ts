@@ -4,15 +4,16 @@ import { expect, mock, test } from 'claude-code/testing'
 
 const WINDOW = 200_000
 
-// The icons as the meter draws them: Nerd Font code points.
-const MEMORY = '\u{F035B}'
-const SAND = '\u{F051F}'
-const CALENDAR = '\u{F00ED}'
-const ROBOT = '\u{F06A9}'
-const GAUGE = '\u{F04C5}'
+// The icons as the row draws them: Nerd Font code points.
+const CHIP = '\u{F2DB}'
+const HOURGLASS = '\u{F252}'
+const CALENDAR = '\u{F073}'
+const SPARKLES = '\u{F0674}'
+const GAUGE_LOW = '\u{F0875}'
+const FIRE = '\u{F0238}'
 
-// The hint line under an empty prompt, as the engine hands it to the plugins.
-const HINT = { isDraft: false, isWorking: false, hint: '? for shortcuts' }
+// The band above the prompt as the terminal hands it to the plugins, less its width.
+const BAND = { hasSurvey: false, isWorking: false, maxRows: 10, scroll: { offset: 0, bodyRows: 10 }, view: {} }
 
 // A /context breakdown with `used` tokens in use, beside rows that do not count.
 function breakdown(used: number): SessionContextBreakdown {
@@ -49,25 +50,13 @@ type World = {
   output?: (command: string, args: string) => string
 }
 
-// The engine beneath the plugin: its clock, the hint line and mode labels it
-// draws, the figures `$.session.usage()` reads (no fill reported, no limits,
+// The engine beneath the plugin: its clock, the band it draws when the plugin
+// passes, the figures `$.session.usage()` reads (no fill reported, no limits,
 // by default), the session's model, slash commands and model requests.
 function setUp(on: On, { now, usage, model, output }: World = {}) {
   const clock = mock.clock(on, { now })
-  const tails: (string | undefined)[] = []
-  const modes: (readonly string[])[] = []
 
-  on('ui.render', { component: 'PromptHint' }, (_$, e) => {
-    tails.push(e.props.tail)
-
-    return { type: 'engine', ref: 0 }
-  })
-  on('ui.render', { component: 'SessionMode' }, (_$, e) => {
-    modes.push(e.props.modes)
-
-    return { type: 'engine', ref: 0 }
-  })
-  on('ui.status', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'engine', ref: 0 }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
@@ -81,22 +70,50 @@ function setUp(on: On, { now, usage, model, output }: World = {}) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
   })
 
-  // What the hint line ends with when the terminal draws it now.
-  async function tail($: Engine) {
-    await $.ui.render({ surface: 'terminal', component: 'PromptHint', requestId: 'prompt-hint', props: HINT })
-
-    return tails.at(-1)
-  }
-
-  // The mode labels the terminal draws at the right of the footer now.
-  async function footer($: Engine) {
-    await $.ui.render({ surface: 'terminal', component: 'SessionMode', requestId: 'session-mode', props: { modes: [] } })
-
-    return modes.at(-1)
-  }
-
-  return { clock, tail, footer }
+  return { clock }
 }
+
+// The text a drawn node shows, its descendants' strings in order.
+function textOf(node: unknown): string {
+  if (typeof node === 'string') {
+    return node
+  }
+
+  const children = (node as { children?: unknown[] } | undefined)?.children ?? []
+
+  return children.map(textOf).join('')
+}
+
+// The Box drawn with `key`, anywhere in the tree.
+function partOf(node: unknown, key: string): unknown {
+  if (typeof node !== 'object' || node === null) {
+    return undefined
+  }
+
+  const { props, children = [] } = node as { props?: { key?: unknown }; children?: unknown[] }
+
+  return props?.key === key ? node : children.map(child => partOf(child, key)).find(part => part !== undefined)
+}
+
+// The row as the terminal draws it `columns` wide: what each side shows, and
+// the color the Text showing `text` exactly is drawn in.
+async function row($: Engine, { columns = 120, hasSurvey = false } = {}) {
+  const ui = await $.ui.mount({
+    plugin: 'context-meter',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { ...BAND, bodyColumns: columns, hasSurvey },
+  })
+  const drawn = await ui.drawn()
+
+  async function colorOf(text: string) {
+    return (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props.color
+  }
+
+  return { usage: textOf(partOf(drawn, 'usage')), model: textOf(partOf(drawn, 'model')), drawn, colorOf }
+}
+
+const start = ($: Engine) => $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
 
 // A slash command the person typed at a fullscreen terminal.
 const command = ($: Engine, name: string, args: string) =>
@@ -112,31 +129,65 @@ async function step($: Engine, model: string, effort?: 'low' | 'medium' | 'high'
   const stream = $.turn.step({ turnId: 'turn', index: 0, model, effort, messageCount: 1 })
 
   for await (const _ of stream) {
-    // the test reads the labels, not the response
+    // the test reads the row, not the response
   }
 }
 
-const start = ($: Engine) => $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+const MEASURED = {
+  context: { tokens: 63_000, window: WINDOW, percent: 32 },
+  rateLimits: [
+    { kind: 'five_hour', percentUsed: 42.5, resetsAt: '2026-10-02T15:00:00Z' },
+    { kind: 'seven_day', percentUsed: 18, resetsAt: '2026-10-06T09:00:00Z' },
+  ],
+  changed: ['context' as const, 'rateLimits' as const],
+}
 
-test('ends the hint line with the fill and the usage limits measured after a turn', async ($, on) => {
-  const { tail } = setUp(on)
+test('draws the fill and the usage limits on the left of the row, the model on the right', async ($, on) => {
+  setUp(on)
   await start($)
 
-  await $.session.measure({
-    context: { tokens: 63_000, window: WINDOW, percent: 32 },
-    rateLimits: [
-      { kind: 'five_hour', percentUsed: 42.5, resetsAt: '2026-10-02T15:00:00Z' },
-      { kind: 'seven_day', percentUsed: 18, resetsAt: '2026-10-06T09:00:00Z' },
-    ],
-    changed: ['context', 'rateLimits'],
-  })
+  await $.session.measure(MEASURED)
+  const { usage, model, colorOf } = await row($)
 
-  expect(await tail($)).toBe(`${MEMORY} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${SAND} ▰▰▰▱▱▱▱▱ 43% · ${CALENDAR} ▰▱▱▱▱▱▱▱ 18%`)
+  expect(usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${HOURGLASS} ▰▰▰▱▱▱▱▱ 43% · ${CALENDAR} ▰▱▱▱▱▱▱▱ 18%`)
+  expect(model).toBe(`${SPARKLES} Opus 5.5`)
+  expect(await colorOf('32%')).toBe('success')
+  expect(await colorOf(`${CHIP} `)).toBe('rainbow_blue')
 })
 
-test('updates at each tool call of a turn, then estimates the fill after /clear', async ($, on) => {
+test('drops the token counts, then shortens the bars, as the row narrows', async ($, on) => {
+  setUp(on)
+  await start($)
+  await $.session.measure(MEASURED)
+
+  expect((await row($, { columns: 70 })).usage).toBe(
+    `${CHIP} ▰▰▰▱▱▱▱▱ 32% · ${HOURGLASS} ▰▰▰▱▱▱▱▱ 43% · ${CALENDAR} ▰▱▱▱▱▱▱▱ 18%`,
+  )
+  expect((await row($, { columns: 60 })).usage).toBe(`${CHIP} ▰▱▱▱ 32% · ${HOURGLASS} ▰▰▱▱ 43% · ${CALENDAR} ▰▱▱▱ 18%`)
+  expect((await row($, { columns: 40 })).usage).toBe(`${CHIP} 32% · ${HOURGLASS} 43% · ${CALENDAR} 18%`)
+})
+
+test('colors a gauge by how full it is', async ($, on) => {
+  setUp(on, {
+    usage: () => ({
+      startedAt: 0,
+      rateLimits: [{ kind: 'five_hour', percentUsed: 85 }],
+      context: { tokens: 150_000, window: WINDOW },
+    }),
+  })
+  await start($)
+
+  await $.tool.call({ tool: 'Bash', command: 'echo hi' })
+  const { usage, colorOf } = await row($)
+
+  expect(usage).toBe(`${CHIP} ▰▰▰▰▰▰▱▱ 75% 150k/200k · ${HOURGLASS} ▰▰▰▰▰▰▰▱ 85%`)
+  expect(await colorOf('75%')).toBe('warning')
+  expect(await colorOf('85%')).toBe('error')
+})
+
+test('estimates the fill after /clear, until a response reports one', async ($, on) => {
   let tokens: number | undefined = 150_000
-  const { clock, tail } = setUp(on, {
+  const { clock } = setUp(on, {
     usage: args => ({
       startedAt: 0,
       rateLimits: [],
@@ -144,15 +195,13 @@ test('updates at each tool call of a turn, then estimates the fill after /clear'
     }),
   })
   await start($)
-
   await $.tool.call({ tool: 'Bash', command: 'echo hi' })
-  expect(await tail($)).toBe(`${MEMORY} ▰▰▰▰▰▰▱▱ 75% 150k/200k`)
 
   tokens = undefined
   await $.session.end({ reason: 'clear', sessionId: 'before', resume: { id: 'before' } })
   await clock.advance(300)
 
-  expect(await tail($)).toBe(`${MEMORY} ▰▱▱▱▱▱▱▱ ~9% ~18k/200k`)
+  expect((await row($)).usage).toBe(`${CHIP} ▰▱▱▱▱▱▱▱ ~9% ~18k/200k`)
 })
 
 test('empties a usage window once it has reset', async ($, on) => {
@@ -160,62 +209,67 @@ test('empties a usage window once it has reset', async ($, on) => {
     context: { tokens: 63_000, window: WINDOW },
     rateLimits: [{ kind: 'five_hour', percentUsed: 97, resetsAt: '2026-10-02T15:00:30Z' }],
   }
-  const { clock, tail } = setUp(on, {
+  const { clock } = setUp(on, {
     now: Date.parse('2026-10-02T15:00:00Z'),
     usage: () => ({ startedAt: 0, ...reading }),
   })
   await start($)
 
   await $.session.measure({ ...reading, changed: ['context', 'rateLimits'] })
-  expect(await tail($)).toBe(`${MEMORY} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${SAND} ▰▰▰▰▰▰▰▰ 97%`)
+  expect((await row($)).usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${HOURGLASS} ▰▰▰▰▰▰▰▰ 97%`)
 
   await clock.advance(60_000)
-  expect(await tail($)).toBe(`${MEMORY} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${SAND} ▱▱▱▱▱▱▱▱ 0%`)
+  expect((await row($)).usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${HOURGLASS} ▱▱▱▱▱▱▱▱ 0%`)
 })
 
-test('leaves the hint line alone in a run with nobody at the prompt', async ($, on) => {
-  const { tail } = setUp(on)
-  await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
-
-  await $.session.measure({ context: { tokens: 63_000, window: WINDOW }, rateLimits: [], changed: ['context'] })
-
-  expect(await tail($)).toBeUndefined()
-})
-
-test('names the model and its effort after the footer modes, as each request names them', async ($, on) => {
-  const { footer } = setUp(on)
+test('names the model and its effort as each request names them', async ($, on) => {
+  setUp(on)
   await start($)
-  expect(await footer($)).toEqual([`${ROBOT} Opus 5.5`])
 
   await step($, 'claude-opus-5-5[1m]', 'max')
-  expect(await footer($)).toEqual([`${ROBOT} Opus 5.5 ${GAUGE} max`])
+  const maxed = await row($)
+  expect(maxed.model).toBe(`${SPARKLES} Opus 5.5  ${FIRE} max`)
+  expect(await maxed.colorOf('max')).toBe('effortUltra')
 
   await step($, 'claude-haiku-4-5-20251001')
-  expect(await footer($)).toEqual([`${ROBOT} Haiku 4.5`])
+  expect((await row($)).model).toBe(`${SPARKLES} Haiku 4.5`)
 })
 
 test('shows the effort /effort set before the next request', async ($, on) => {
-  const { footer } = setUp(on, {
-    output: (command, args) => (command === 'effort' && args === '' ? 'Set effort level to xhigh (this session only)' : ''),
+  setUp(on, {
+    output: (name, args) => (name === 'effort' && args === '' ? 'Set effort level to medium (this session only)' : ''),
   })
   await start($)
   await step($, 'claude-opus-5-5', 'max')
 
-  await command($, 'effort', 'high')
-  expect(await footer($)).toEqual([`${ROBOT} Opus 5.5 ${GAUGE} high`])
-
   await command($, 'effort', '')
-  expect(await footer($)).toEqual([`${ROBOT} Opus 5.5 ${GAUGE} xhigh`])
+  expect((await row($)).model).toBe(`${SPARKLES} Opus 5.5  ${GAUGE_LOW} medium`)
 })
 
 test('reads the model /model chose and leaves the effort to the next request', async ($, on) => {
   let model = 'Opus 5.5'
-  const { footer } = setUp(on, { model: () => model })
+  setUp(on, { model: () => model })
   await start($)
   await step($, 'claude-opus-5-5', 'max')
 
   model = 'Sonnet 5.5'
   await command($, 'model', 'sonnet')
 
-  expect(await footer($)).toEqual([`${ROBOT} Sonnet 5.5`])
+  expect((await row($)).model).toBe(`${SPARKLES} Sonnet 5.5`)
+})
+
+test('leaves the band to a survey', async ($, on) => {
+  setUp(on)
+  await start($)
+  await $.session.measure(MEASURED)
+
+  expect((await row($, { hasSurvey: true })).drawn).toEqual({ type: 'engine', ref: 0 })
+})
+
+test('draws nothing in a run with nobody at the prompt', async ($, on) => {
+  setUp(on)
+  await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+  await $.session.measure(MEASURED)
+
+  expect((await row($)).drawn).toEqual({ type: 'engine', ref: 0 })
 })

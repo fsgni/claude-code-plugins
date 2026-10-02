@@ -1,7 +1,7 @@
 {
   "name": "context-meter",
-  "version": "0.3.0",
-  "description": "Keeps the context window's fill and the plan's usage limits at the end of the hint line under the prompt, and the model and its effort after the footer's mode labels, as Nerd Font icons",
+  "version": "0.4.0",
+  "description": "A colored row above the prompt: the context window's fill and the plan's usage limits on the left, the model and its effort on the right, as Nerd Font icons",
   "author": { "name": "fsgni" },
   "homepage": "https://github.com/fsgni/claude-code-plugins",
   "types": "./types/index.d.ts"
