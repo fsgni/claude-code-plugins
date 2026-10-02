@@ -7,10 +7,13 @@ import type {
   SessionRateLimit,
 } from 'claude-code'
 
-import type { MeterLine } from '../types'
+import type { MeterLine, ModelLabel } from '../types'
 
 // What the hint line under the prompt ends with.
 const line = atom({ plugin: 'context-meter', key: 'line' } as const, null)
+
+// What the footer's mode labels end with: the model and its effort.
+const label = atom({ plugin: 'context-meter', key: 'model' } as const, null)
 
 // Cells in each bar: ▰ used, ▱ left.
 const CELLS = 8
@@ -29,6 +32,12 @@ const LIMIT_ICONS: Record<string, string> = {
   spend_limit: '\u{F09D}', // nf-fa-credit_card
 }
 const OTHER_LIMIT_ICON = '\u{F080}' // nf-fa-bar_chart
+const MODEL_ICON = '\u{F06A9}' // nf-md-robot
+const EFFORT_ICON = '\u{F04C5}' // nf-md-speedometer
+
+// The effort level `/effort` was given, or the one its output says it set.
+const EFFORT_ARG = /^\s*(low|medium|high|xhigh|max)\b/i
+const EFFORT_SET = /\bto (low|medium|high|xhigh|max)\b/i
 
 type Fill = { used: number; window: number; isEstimate: boolean }
 type Reading = { context: SessionContextUsage; rateLimits: readonly SessionRateLimit[] }
@@ -43,6 +52,11 @@ type Meter = {
   fillSeq: number
   // The line last written; undefined until this load wrote one.
   shown: MeterLine | undefined
+  // The main loop's model and effort, as its latest request named them.
+  model: string | undefined
+  effort: string | undefined
+  // The label last written; undefined until this load wrote one.
+  labelShown: ModelLabel | undefined
 }
 
 function bar(percent: number): string {
@@ -134,6 +148,54 @@ function later($: EngineInterface, meter: Meter) {
   $.clock.after(SETTLE_MS, () => void refresh($, meter))
 }
 
+// "claude-opus-5-5[1m]" → "Opus 5.5", "claude-haiku-4-5-20251001" → "Haiku 4.5"
+function modelName(model: string): string {
+  const match = /(opus|sonnet|haiku|fable)(?:[-\s]+(\d+)(?:[-.](\d{1,2})(?!\d))?)?/i.exec(model)
+  const family = match?.[1]
+
+  if (match === null || family === undefined) {
+    return model
+  }
+
+  const version = [match[2], match[3]].filter(part => part !== undefined).join('.')
+
+  return `${family.charAt(0).toUpperCase()}${family.slice(1).toLowerCase()}${version === '' ? '' : ` ${version}`}`
+}
+
+async function paintLabel($: EngineInterface, meter: Meter) {
+  if (!meter.isInteractive) {
+    return
+  }
+
+  const parts: string[] = []
+
+  if (meter.model !== undefined) {
+    parts.push(`${MODEL_ICON} ${modelName(meter.model)}`)
+  }
+
+  if (meter.effort !== undefined) {
+    parts.push(`${EFFORT_ICON} ${meter.effort}`)
+  }
+
+  const text = parts.length > 0 ? parts.join(' ') : null
+
+  if (text !== meter.labelShown) {
+    meter.labelShown = text
+    await update($, label, () => text)
+  }
+}
+
+// The main loop's model as /model names it: before the first request, and
+// after /model changed it.
+async function learnModel($: EngineInterface, meter: Meter) {
+  try {
+    meter.model = await $.session.model()
+    await paintLabel($, meter)
+  } catch (error) {
+    $.ui.log(`model read failed: ${String(error)}`, { to: 'debug' })
+  }
+}
+
 export const register: Register = on => {
   const meter: Meter = {
     isInteractive: false,
@@ -142,9 +204,12 @@ export const register: Register = on => {
     limits: [],
     fillSeq: 0,
     shown: undefined,
+    model: undefined,
+    effort: undefined,
+    labelShown: undefined,
   }
 
-  on('session.start', ($, e, next) => {
+  on('session.start', async ($, e, next) => {
     meter.isInteractive = e.isInteractive
 
     if (meter.isInteractive) {
@@ -156,6 +221,8 @@ export const register: Register = on => {
         meter.isTicking = true
         $.clock.every(TICK_MS, () => void refresh($, meter, { canEstimate: false }))
       }
+
+      await learnModel($, meter)
     }
 
     return next(e)
@@ -165,6 +232,45 @@ export const register: Register = on => {
     const text = await read($, line)
 
     return text === null ? next(e) : next({ ...e, props: { ...e.props, tail: text } })
+  })
+
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    const text = await read($, label)
+
+    return text === null ? next(e) : next({ ...e, props: { ...e.props, modes: [...e.props.modes, text] } })
+  })
+
+  // Every request of the main loop names its model and effort.
+  on('turn.step', async function* ($, e, next) {
+    if (e.agentId === undefined) {
+      meter.model = e.model
+      meter.effort = e.effort === undefined ? undefined : String(e.effort)
+      await paintLabel($, meter)
+    }
+
+    return yield* next(e)
+  })
+
+  // /effort takes effect before the next request: show the level it set.
+  on('command.run', { command: 'effort' }, async ($, e, next) => {
+    const ran = await next(e)
+    const level = EFFORT_ARG.exec(e.args)?.[1] ?? EFFORT_SET.exec(ran.text ?? '')?.[1]
+
+    if (level !== undefined) {
+      meter.effort = level.toLowerCase()
+      await paintLabel($, meter)
+    }
+
+    return ran
+  })
+
+  // /model changes the model now; its effort shows with the next request.
+  on('command.run', { command: 'model' }, async ($, e, next) => {
+    const ran = await next(e)
+    meter.effort = undefined
+    await learnModel($, meter)
+
+    return ran
   })
 
   // The engine pushes its figures after every main-thread turn.
