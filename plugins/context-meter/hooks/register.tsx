@@ -31,7 +31,8 @@ const GAUGE_LOOKS: Record<string, Look> = {
 }
 const OTHER_GAUGE: Look = { icon: '\u{F080}', color: 'subtle' } // nf-fa-bar_chart
 
-const MODEL_LOOK: Look = { icon: '\u{F0674}', color: 'claude' } // nf-md-creation
+// Nerd Fonts 3.5 and later draw it; an older Nerd Font draws a box.
+const MODEL_LOOK: Look = { icon: '\u{EC82}', color: 'claude' } // nf-cod-claude
 
 // The gauge fills up with the effort, and catches fire at max.
 const EFFORT_LOOKS: Record<string, Look> = {

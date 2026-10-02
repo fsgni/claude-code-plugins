@@ -8,7 +8,7 @@ const WINDOW = 200_000
 const CHIP = '\u{F2DB}'
 const HOURGLASS = '\u{F252}'
 const CALENDAR = '\u{F073}'
-const SPARKLES = '\u{F0674}'
+const CLAUDE = '\u{EC82}'
 const GAUGE_LOW = '\u{F0875}'
 const FIRE = '\u{F0238}'
 
@@ -150,7 +150,7 @@ test('draws the fill and the usage limits on the left of the row, the model on t
   const { usage, model } = await row($)
 
   expect(usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% · ${HOURGLASS} ▰▰▰▱▱▱▱▱ 43% · ${CALENDAR} ▰▱▱▱▱▱▱▱ 18%`)
-  expect(model).toBe(`${SPARKLES} Opus 5.5`)
+  expect(model).toBe(`${CLAUDE} Opus 5.5`)
 })
 
 test("keeps clear of the band's collapse button in its top right corner", async ($, on) => {
@@ -160,7 +160,7 @@ test("keeps clear of the band's collapse button in its top right corner", async 
 
   const { drawn, model } = await row($)
 
-  expect(model).toBe(`${SPARKLES} Opus 5.5  ${FIRE} max`)
+  expect(model).toBe(`${CLAUDE} Opus 5.5  ${FIRE} max`)
   expect(drawn).toMatchObject({ type: 'Box', props: { paddingRight: 4 } })
 })
 
@@ -240,12 +240,12 @@ test('names the model and its effort as each request names them', async ($, on) 
 
   await step($, 'claude-opus-5-5[1m]', 'max')
   const maxed = await row($)
-  expect(maxed.model).toBe(`${SPARKLES} Opus 5.5  ${FIRE} max`)
+  expect(maxed.model).toBe(`${CLAUDE} Opus 5.5  ${FIRE} max`)
   expect(await maxed.styleOf(`  ${FIRE} `)).toEqual({ color: 'effortUltra' })
   expect(await maxed.styleOf('max')).toEqual({})
 
   await step($, 'claude-haiku-4-5-20251001')
-  expect((await row($)).model).toBe(`${SPARKLES} Haiku 4.5`)
+  expect((await row($)).model).toBe(`${CLAUDE} Haiku 4.5`)
 })
 
 test('shows the effort /effort set before the next request', async ($, on) => {
@@ -256,7 +256,7 @@ test('shows the effort /effort set before the next request', async ($, on) => {
   await step($, 'claude-opus-5-5', 'max')
 
   await command($, 'effort', '')
-  expect((await row($)).model).toBe(`${SPARKLES} Opus 5.5  ${GAUGE_LOW} medium`)
+  expect((await row($)).model).toBe(`${CLAUDE} Opus 5.5  ${GAUGE_LOW} medium`)
 })
 
 test('reads the model /model chose and leaves the effort to the next request', async ($, on) => {
@@ -268,7 +268,7 @@ test('reads the model /model chose and leaves the effort to the next request', a
   model = 'Sonnet 5.5'
   await command($, 'model', 'sonnet')
 
-  expect((await row($)).model).toBe(`${SPARKLES} Sonnet 5.5`)
+  expect((await row($)).model).toBe(`${CLAUDE} Sonnet 5.5`)
 })
 
 test('leaves the band to a survey', async ($, on) => {
