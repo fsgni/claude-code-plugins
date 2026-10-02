@@ -149,7 +149,7 @@ test('draws the fill and the usage limits on the left of the row, the model on t
   await $.session.measure(MEASURED)
   const { usage, model } = await row($)
 
-  expect(usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${HOURGLASS} ▰▰▰▱▱▱▱▱ 43% · ${CALENDAR} ▰▱▱▱▱▱▱▱ 18%`)
+  expect(usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% · ${HOURGLASS} ▰▰▰▱▱▱▱▱ 43% · ${CALENDAR} ▰▱▱▱▱▱▱▱ 18%`)
   expect(model).toBe(`${SPARKLES} Opus 5.5`)
 })
 
@@ -164,7 +164,7 @@ test("keeps clear of the band's collapse button in its top right corner", async 
   expect(drawn).toMatchObject({ type: 'Box', props: { paddingRight: 4 } })
 })
 
-test('drops the token counts, then shortens the bars, as the row narrows', async ($, on) => {
+test('shortens the bars, then drops them, as the row narrows', async ($, on) => {
   setUp(on)
   await start($)
   await $.session.measure(MEASURED)
@@ -189,7 +189,7 @@ test('colors only the icons, however full a gauge is', async ($, on) => {
   await $.tool.call({ tool: 'Bash', command: 'echo hi' })
   const { usage, styleOf } = await row($)
 
-  expect(usage).toBe(`${CHIP} ▰▰▰▰▰▰▱▱ 75% 150k/200k · ${HOURGLASS} ▰▰▰▰▰▰▰▱ 85%`)
+  expect(usage).toBe(`${CHIP} ▰▰▰▰▰▰▱▱ 75% · ${HOURGLASS} ▰▰▰▰▰▰▰▱ 85%`)
   expect(await styleOf(`${CHIP} `)).toEqual({ color: 'rainbow_blue' })
   expect(await styleOf(`${HOURGLASS} `)).toEqual({ color: 'rainbow_indigo' })
   expect(await styleOf('▰▰▰▰▰▰▱▱ ')).toEqual({ dimColor: true })
@@ -213,7 +213,7 @@ test('estimates the fill after /clear, until a response reports one', async ($, 
   await $.session.end({ reason: 'clear', sessionId: 'before', resume: { id: 'before' } })
   await clock.advance(300)
 
-  expect((await row($)).usage).toBe(`${CHIP} ▰▱▱▱▱▱▱▱ ~9% ~18k/200k`)
+  expect((await row($)).usage).toBe(`${CHIP} ▰▱▱▱▱▱▱▱ ~9%`)
 })
 
 test('empties a usage window once it has reset', async ($, on) => {
@@ -228,10 +228,10 @@ test('empties a usage window once it has reset', async ($, on) => {
   await start($)
 
   await $.session.measure({ ...reading, changed: ['context', 'rateLimits'] })
-  expect((await row($)).usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${HOURGLASS} ▰▰▰▰▰▰▰▰ 97%`)
+  expect((await row($)).usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% · ${HOURGLASS} ▰▰▰▰▰▰▰▰ 97%`)
 
   await clock.advance(60_000)
-  expect((await row($)).usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${HOURGLASS} ▱▱▱▱▱▱▱▱ 0%`)
+  expect((await row($)).usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% · ${HOURGLASS} ▱▱▱▱▱▱▱▱ 0%`)
 })
 
 test('names the model and its effort as each request names them', async ($, on) => {

@@ -1,6 +1,6 @@
 {
   "name": "context-meter",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "A colored row above the prompt: the context window's fill and the plan's usage limits on the left, the model and its effort on the right, as Nerd Font icons",
   "author": { "name": "fsgni" },
   "homepage": "https://github.com/fsgni/claude-code-plugins",

@@ -47,14 +47,8 @@ const OTHER_EFFORT: Look = { icon: '\u{F029A}', color: 'subtle' }
 // row keeps those columns and one more clear.
 const COLLAPSE_COLUMNS = 4
 
-// How much the gauges show, richest first: as the row narrows, the token
-// counts go, then the bars shorten, then the bars go.
-const DENSITIES = [
-  { cells: 8, hasDetail: true },
-  { cells: 8, hasDetail: false },
-  { cells: 4, hasDetail: false },
-  { cells: 0, hasDetail: false },
-] as const
+// The bar's cells, longest first: as the row narrows, the bars shorten, then go.
+const BAR_CELLS = [8, 4, 0] as const
 
 // The effort level `/effort` was given, or the one its output says it set.
 const EFFORT_ARG = /^\s*(low|medium|high|xhigh|max)\b/i
@@ -82,15 +76,6 @@ type Meter = {
   modelShown: string | undefined
 }
 
-// 63_000 → "63k", 1_000_000 → "1M"
-function count(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return `${Number((tokens / 1_000_000).toFixed(1))}M`
-  }
-
-  return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(tokens)
-}
-
 // What occupies the window, as /context counts it: not the free space, the
 // compaction reserve or the tool schemas loaded on demand.
 function usedTokens(breakdown: SessionContextBreakdown): number {
@@ -115,9 +100,8 @@ function modelName(model: string): string {
 
 // Only the icons take color: the bar stays dim and the figures plain, so the
 // row never outshouts the prompt's own footer.
-function gaugePieces(gauge: MeterGauge, cells: number, hasDetail: boolean): Piece[] {
+function gaugePieces(gauge: MeterGauge, cells: number): Piece[] {
   const look = GAUGE_LOOKS[gauge.kind] ?? OTHER_GAUGE
-  const about = gauge.isEstimate ? '~' : ''
   const pieces: Piece[] = [{ text: `${look.icon} `, color: look.color }]
 
   if (cells > 0) {
@@ -125,19 +109,15 @@ function gaugePieces(gauge: MeterGauge, cells: number, hasDetail: boolean): Piec
     pieces.push({ text: `${'▰'.repeat(filled)}${'▱'.repeat(cells - filled)} `, isDim: true })
   }
 
-  pieces.push({ text: `${about}${gauge.percent}%` })
-
-  if (hasDetail && gauge.detail !== null) {
-    pieces.push({ text: ` ${about}${gauge.detail}`, isDim: true })
-  }
+  pieces.push({ text: `${gauge.isEstimate ? '~' : ''}${gauge.percent}%` })
 
   return pieces
 }
 
-function usagePieces(list: readonly MeterGauge[], cells: number, hasDetail: boolean): Piece[] {
+function usagePieces(list: readonly MeterGauge[], cells: number): Piece[] {
   return list.flatMap((gauge, index) => [
     ...(index > 0 ? [{ text: ' · ', isDim: true }] : []),
-    ...gaugePieces(gauge, cells, hasDetail),
+    ...gaugePieces(gauge, cells),
   ])
 }
 
@@ -179,7 +159,6 @@ async function paintGauges($: EngineInterface, meter: Meter) {
       kind: 'context',
       percent: window > 0 ? Math.round((used / window) * 100) : 0,
       isEstimate,
-      detail: `${count(used)}/${count(window)}`,
     })
   }
 
@@ -190,7 +169,6 @@ async function paintGauges($: EngineInterface, meter: Meter) {
       kind: limit.kind,
       percent: hasReset ? 0 : Math.round(limit.percentUsed),
       isEstimate: false,
-      detail: null,
     })
   }
 
@@ -311,9 +289,8 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const room = e.props.bodyColumns - COLLAPSE_COLUMNS - widthOf(right) - (right.length > 0 ? 2 : 0)
     const left =
-      DENSITIES.map(({ cells, hasDetail }) => usagePieces(list, cells, hasDetail)).find(
-        pieces => widthOf(pieces) <= room,
-      ) ?? usagePieces(list, 0, false)
+      BAR_CELLS.map(cells => usagePieces(list, cells)).find(pieces => widthOf(pieces) <= room) ??
+      usagePieces(list, 0)
     const draw = (pieces: readonly Piece[]) =>
       pieces.filter(piece => piece.text !== '').map(piece => <Text {...styleOf(piece)}>{piece.text}</Text>)
 

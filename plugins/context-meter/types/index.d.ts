@@ -5,8 +5,6 @@ export type MeterGauge = {
   kind: string
   percent: number
   isEstimate: boolean
-  // The context window's tokens, used/window (`245k/1M`); null for a usage window.
-  detail: string | null
 }
 
 // The gauges drawn on the left of the row; null draws none.
