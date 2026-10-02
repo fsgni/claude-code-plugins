@@ -96,7 +96,7 @@ function partOf(node: unknown, key: string): unknown {
 }
 
 // The row as the terminal draws it `columns` wide: what each side shows, and
-// the color the Text showing `text` exactly is drawn in.
+// the style props of the first Text showing `text` exactly.
 async function row($: Engine, { columns = 120, hasSurvey = false } = {}) {
   const ui = await $.ui.mount({
     plugin: 'context-meter',
@@ -106,11 +106,11 @@ async function row($: Engine, { columns = 120, hasSurvey = false } = {}) {
   })
   const drawn = await ui.drawn()
 
-  async function colorOf(text: string) {
-    return (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props.color
+  async function styleOf(text: string) {
+    return (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
   }
 
-  return { usage: textOf(partOf(drawn, 'usage')), model: textOf(partOf(drawn, 'model')), drawn, colorOf }
+  return { usage: textOf(partOf(drawn, 'usage')), model: textOf(partOf(drawn, 'model')), drawn, styleOf }
 }
 
 const start = ($: Engine) => $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
@@ -147,12 +147,10 @@ test('draws the fill and the usage limits on the left of the row, the model on t
   await start($)
 
   await $.session.measure(MEASURED)
-  const { usage, model, colorOf } = await row($)
+  const { usage, model } = await row($)
 
   expect(usage).toBe(`${CHIP} ▰▰▰▱▱▱▱▱ 32% 63k/200k · ${HOURGLASS} ▰▰▰▱▱▱▱▱ 43% · ${CALENDAR} ▰▱▱▱▱▱▱▱ 18%`)
   expect(model).toBe(`${SPARKLES} Opus 5.5`)
-  expect(await colorOf('32%')).toBe('success')
-  expect(await colorOf(`${CHIP} `)).toBe('rainbow_blue')
 })
 
 test("keeps clear of the band's collapse button in its top right corner", async ($, on) => {
@@ -178,7 +176,7 @@ test('drops the token counts, then shortens the bars, as the row narrows', async
   expect((await row($, { columns: 40 })).usage).toBe(`${CHIP} 32% · ${HOURGLASS} 43% · ${CALENDAR} 18%`)
 })
 
-test('colors a gauge by how full it is', async ($, on) => {
+test('colors only the icons, however full a gauge is', async ($, on) => {
   setUp(on, {
     usage: () => ({
       startedAt: 0,
@@ -189,11 +187,14 @@ test('colors a gauge by how full it is', async ($, on) => {
   await start($)
 
   await $.tool.call({ tool: 'Bash', command: 'echo hi' })
-  const { usage, colorOf } = await row($)
+  const { usage, styleOf } = await row($)
 
   expect(usage).toBe(`${CHIP} ▰▰▰▰▰▰▱▱ 75% 150k/200k · ${HOURGLASS} ▰▰▰▰▰▰▰▱ 85%`)
-  expect(await colorOf('75%')).toBe('warning')
-  expect(await colorOf('85%')).toBe('error')
+  expect(await styleOf(`${CHIP} `)).toEqual({ color: 'rainbow_blue' })
+  expect(await styleOf(`${HOURGLASS} `)).toEqual({ color: 'rainbow_indigo' })
+  expect(await styleOf('▰▰▰▰▰▰▱▱ ')).toEqual({ dimColor: true })
+  expect(await styleOf('75%')).toEqual({})
+  expect(await styleOf('85%')).toEqual({})
 })
 
 test('estimates the fill after /clear, until a response reports one', async ($, on) => {
@@ -240,7 +241,8 @@ test('names the model and its effort as each request names them', async ($, on) 
   await step($, 'claude-opus-5-5[1m]', 'max')
   const maxed = await row($)
   expect(maxed.model).toBe(`${SPARKLES} Opus 5.5  ${FIRE} max`)
-  expect(await maxed.colorOf('max')).toBe('effortUltra')
+  expect(await maxed.styleOf(`  ${FIRE} `)).toEqual({ color: 'effortUltra' })
+  expect(await maxed.styleOf('max')).toEqual({})
 
   await step($, 'claude-haiku-4-5-20251001')
   expect((await row($)).model).toBe(`${SPARKLES} Haiku 4.5`)

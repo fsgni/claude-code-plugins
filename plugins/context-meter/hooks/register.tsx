@@ -64,7 +64,7 @@ type Fill = { used: number; window: number; isEstimate: boolean }
 type Reading = { context: SessionContextUsage; rateLimits: readonly SessionRateLimit[] }
 
 // A run of text in one style; the row is drawn from these.
-type Piece = { text: string; color?: string; isBold?: boolean; isDim?: boolean }
+type Piece = { text: string; color?: string; isDim?: boolean }
 
 // What the row is drawn from, one per load of the module.
 type Meter = {
@@ -113,26 +113,19 @@ function modelName(model: string): string {
   return `${family.charAt(0).toUpperCase()}${family.slice(1).toLowerCase()}${version === '' ? '' : ` ${version}`}`
 }
 
-function usageColor(percent: number): string {
-  if (percent >= 80) {
-    return 'error'
-  }
-
-  return percent >= 50 ? 'warning' : 'success'
-}
-
+// Only the icons take color: the bar stays dim and the figures plain, so the
+// row never outshouts the prompt's own footer.
 function gaugePieces(gauge: MeterGauge, cells: number, hasDetail: boolean): Piece[] {
   const look = GAUGE_LOOKS[gauge.kind] ?? OTHER_GAUGE
-  const color = usageColor(gauge.percent)
   const about = gauge.isEstimate ? '~' : ''
   const pieces: Piece[] = [{ text: `${look.icon} `, color: look.color }]
 
   if (cells > 0) {
     const filled = Math.max(0, Math.min(cells, Math.round((gauge.percent / 100) * cells)))
-    pieces.push({ text: '▰'.repeat(filled), color }, { text: `${'▱'.repeat(cells - filled)} `, isDim: true })
+    pieces.push({ text: `${'▰'.repeat(filled)}${'▱'.repeat(cells - filled)} `, isDim: true })
   }
 
-  pieces.push({ text: `${about}${gauge.percent}%`, color, isBold: true })
+  pieces.push({ text: `${about}${gauge.percent}%` })
 
   if (hasDetail && gauge.detail !== null) {
     pieces.push({ text: ` ${about}${gauge.detail}`, isDim: true })
@@ -153,14 +146,11 @@ function modelPieces(value: MeterModel): Piece[] {
     return []
   }
 
-  const pieces: Piece[] = [
-    { text: `${MODEL_LOOK.icon} `, color: MODEL_LOOK.color },
-    { text: modelName(value.model), isBold: true },
-  ]
+  const pieces: Piece[] = [{ text: `${MODEL_LOOK.icon} `, color: MODEL_LOOK.color }, { text: modelName(value.model) }]
 
   if (value.effort !== null) {
     const look = EFFORT_LOOKS[value.effort] ?? OTHER_EFFORT
-    pieces.push({ text: `  ${look.icon} `, color: look.color }, { text: value.effort, color: look.color, isBold: true })
+    pieces.push({ text: `  ${look.icon} `, color: look.color }, { text: value.effort })
   }
 
   return pieces
@@ -174,7 +164,6 @@ function widthOf(pieces: readonly Piece[]): number {
 function styleOf(piece: Piece) {
   return {
     ...(piece.color !== undefined && { color: piece.color }),
-    ...(piece.isBold === true && { bold: true }),
     ...(piece.isDim === true && { dimColor: true }),
   }
 }
