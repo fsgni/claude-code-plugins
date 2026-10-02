@@ -43,6 +43,10 @@ const EFFORT_LOOKS: Record<string, Look> = {
 }
 const OTHER_EFFORT: Look = { icon: '\u{F029A}', color: 'subtle' }
 
+// The band draws its collapse button, `[-]`, over its top right corner: the
+// row keeps those columns and one more clear.
+const COLLAPSE_COLUMNS = 4
+
 // How much the gauges show, richest first: as the row narrows, the token
 // counts go, then the bars shorten, then the bars go.
 const DENSITIES = [
@@ -316,7 +320,7 @@ export const register: Register = on => {
     }
 
     const { Box, Text } = $.ui.resolve(e)
-    const room = e.props.bodyColumns - widthOf(right) - 4
+    const room = e.props.bodyColumns - COLLAPSE_COLUMNS - widthOf(right) - (right.length > 0 ? 2 : 0)
     const left =
       DENSITIES.map(({ cells, hasDetail }) => usagePieces(list, cells, hasDetail)).find(
         pieces => widthOf(pieces) <= room,
@@ -325,7 +329,7 @@ export const register: Register = on => {
       pieces.filter(piece => piece.text !== '').map(piece => <Text {...styleOf(piece)}>{piece.text}</Text>)
 
     return (
-      <Box flexDirection="row">
+      <Box flexDirection="row" paddingRight={COLLAPSE_COLUMNS}>
         <Box key="usage" flexGrow={1} flexShrink={1} overflow="hidden">
           {left.length > 0 && <Text wrap="truncate">{draw(left)}</Text>}
         </Box>

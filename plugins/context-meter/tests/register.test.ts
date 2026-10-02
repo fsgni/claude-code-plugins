@@ -155,6 +155,17 @@ test('draws the fill and the usage limits on the left of the row, the model on t
   expect(await colorOf(`${CHIP} `)).toBe('rainbow_blue')
 })
 
+test("keeps clear of the band's collapse button in its top right corner", async ($, on) => {
+  setUp(on)
+  await start($)
+  await step($, 'claude-opus-5-5', 'max')
+
+  const { drawn, model } = await row($)
+
+  expect(model).toBe(`${SPARKLES} Opus 5.5  ${FIRE} max`)
+  expect(drawn).toMatchObject({ type: 'Box', props: { paddingRight: 4 } })
+})
+
 test('drops the token counts, then shortens the bars, as the row narrows', async ($, on) => {
   setUp(on)
   await start($)
