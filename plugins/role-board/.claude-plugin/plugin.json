@@ -1,7 +1,7 @@
 {
   "name": "role-board",
-  "version": "0.1.0",
-  "description": "A pane beside the transcript: every conversation in this folder by the role you named it, what it is doing, and whether it waits for you",
+  "version": "0.2.0",
+  "description": "/board splits Windows Terminal: every conversation in this folder by the role you named it, what it is doing, and whether it waits for you",
   "author": { "name": "fsgni" },
   "homepage": "https://github.com/fsgni/claude-code-plugins",
   "types": "./types/index.d.ts"

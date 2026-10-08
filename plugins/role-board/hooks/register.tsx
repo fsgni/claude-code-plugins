@@ -1,24 +1,37 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput } from 'claude-code'
 
-import type { BoardCard, BoardOutcome, BoardRow, BoardState, BoardView } from '../types'
+import type {
+  BoardCard,
+  BoardLine,
+  BoardOutcome,
+  BoardRow,
+  BoardScreen,
+  BoardSpan,
+  BoardState,
+  BoardTone,
+  BoardView,
+} from '../types'
 
-// This session's own card, what the pane draws, and what became of the pane.
+// This session's own card, what the board shows, and the screen this session
+// writes for its terminal panes.
 const card = atom({ plugin: 'role-board', key: 'card' } as const, null)
 const board = atom({ plugin: 'role-board', key: 'board' } as const, null)
-const isDismissed = atom({ plugin: 'role-board', key: 'isDismissed' } as const, false)
-const hasOpened = atom({ plugin: 'role-board', key: 'hasOpened' } as const, false)
+const boardId = atom({ plugin: 'role-board', key: 'boardId' } as const, null)
 
+// Outside Windows Terminal the board is a pane of Claude Code's own.
 const PANE = 'role-board'
 const TITLE = '职责'
-
-// The width the dock asks for beside the transcript.
 const PANE_COLUMNS = 34
 
-// How often to read the other sessions, to rewrite this one's card while
-// nothing happens, and to ask which of them still run.
+// The share of the conversation's pane the board's split takes, on the right.
+const SPLIT_SIZE = '0.3'
+
+// How often to read the other sessions, to rewrite this one's card and the
+// screen while nothing happens, and to ask which sessions still run.
 const REFRESH_MS = 2_000
 const BEAT_MS = 15_000
+const SCREEN_BEAT_MS = 10_000
 const ALIVE_MS = 30_000
 
 // A card unwritten this long belongs to a session that no longer runs the plugin.
@@ -31,26 +44,38 @@ const WRITE_MS = 250
 const SETTLE_MS = 300
 
 // How long a conversation's card may lag behind its turn's end before the
-// pane takes the turn as ended without saying how.
+// board takes the turn as ended without saying how.
 const CATCH_UP_MS = 10_000
 
 // How much of a prompt, an answer or a tool's target a card keeps.
 const LINE_CHARS = 80
 const TARGET_CHARS = 40
 
-// Nerd Font icons (CaskaydiaMono Nerd Font draws them) and the theme colors
-// they take.
-type Look = { icon: string; color: string }
+// Nerd Font icons (CaskaydiaMono Nerd Font draws them) and the tones they take.
+type Look = { icon: string; tone: BoardTone }
 
 const LOOKS: Record<BoardState | 'done', Look> = {
-  working: { icon: '\u{F110}', color: 'claude' }, // nf-fa-spinner
-  waiting: { icon: '\u{F0F3}', color: 'warning' }, // nf-fa-bell
-  done: { icon: '\u{F00C}', color: 'success' }, // nf-fa-check
-  idle: { icon: '\u{F10C}', color: 'inactive' }, // nf-fa-circle_o
+  working: { icon: '\u{F110}', tone: 'claude' }, // nf-fa-spinner
+  waiting: { icon: '\u{F0F3}', tone: 'warning' }, // nf-fa-bell
+  done: { icon: '\u{F00C}', tone: 'success' }, // nf-fa-check
+  idle: { icon: '\u{F10C}', tone: 'muted' }, // nf-fa-circle_o
 }
-const FOLDER_LOOK: Look = { icon: '\u{F07C}', color: 'rainbow_blue' } // nf-fa-folder_open
+const FOLDER_LOOK: Look = { icon: '\u{F07C}', tone: 'accent' } // nf-fa-folder_open
 
-// What the engine says a session waits for, in the pane's words.
+// A tone as Claude Code's own pane draws it, in theme colors.
+const TONE_STYLES: Record<BoardTone, { color?: string; dimColor?: true; bold?: true }> = {
+  claude: { color: 'claude' },
+  warning: { color: 'warning' },
+  success: { color: 'success' },
+  muted: { dimColor: true },
+  accent: { color: 'rainbow_blue' },
+  strong: { bold: true },
+}
+
+const HINT = 'q 关闭'
+const STALE_NOTE = '打开它的对话没有回应了 · q 关闭'
+
+// What the engine says a session waits for, in the board's words.
 const WAITS: Record<string, string> = {
   'input needed': '等你回答',
   'dialog open': '等你操作',
@@ -71,7 +96,7 @@ const THINKING = '思考中'
 // A session without the plugin says only that it works.
 const WORKING = '工作中'
 
-// How a tool call reads in the pane: a verb, then what it works on.
+// How a tool call reads on the board: a verb, then what it works on.
 const VERBS: Record<string, string> = {
   Read: '读',
   Edit: '改',
@@ -114,7 +139,6 @@ type Watch = {
   isRunning: boolean
   isRefreshing: boolean
   isWriteDue: boolean
-  isFullscreen: boolean
   // Claude Code's configuration folder, where the sessions register.
   dir: string | undefined
   // The registry's files by name, as last read, and when each was written.
@@ -127,8 +151,11 @@ type Watch = {
   ownPid: number | undefined
   // Each conversation's state as the toasts last saw it.
   states: Map<string, BoardState> | undefined
-  // What was last written to `board`, as JSON.
+  // What was last written to `board`, and to the screen, as JSON; when the
+  // screen was last written.
   shown: string | undefined
+  screenShown: string | undefined
+  screenAt: number
   // The main loop's tool calls running now, oldest first.
   calls: Map<string, NonNullable<BoardCard['doing']>>
   callSeq: number
@@ -142,6 +169,10 @@ function baseName(path: string): string {
   const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/)
 
   return parts[parts.length - 1] || path
+}
+
+function windowsPath(path: string): string {
+  return path.replace(/\//g, '\\')
 }
 
 // One spelling per folder: no trailing separator, forward slashes, one case.
@@ -196,7 +227,7 @@ function ago(ms: number): string {
 function entryOf(text: string): Entry | undefined {
   try {
     const raw = JSON.parse(text) as Record<string, unknown>
-    const { pid, sessionId, cwd, name } = raw
+    const { pid, sessionId, cwd, name, nameSource } = raw
 
     if (typeof pid !== 'number' || typeof sessionId !== 'string' || typeof cwd !== 'string') {
       return undefined
@@ -209,7 +240,9 @@ function entryOf(text: string): Entry | undefined {
       sessionId,
       cwd,
       name: hasName ? name : baseName(cwd),
-      isNamed: hasName && raw.nameSource !== 'derived',
+      // Named by the person (or a peer at their word), not made up by
+      // Claude Code from the folder or the conversation.
+      isNamed: hasName && (nameSource === undefined || nameSource === 'user' || nameSource === 'peer'),
       status: typeof raw.status === 'string' ? raw.status : 'idle',
       waitingFor: typeof raw.waitingFor === 'string' && raw.waitingFor !== '' ? raw.waitingFor : undefined,
       statusAt: numberOr(raw.statusUpdatedAt, numberOr(raw.updatedAt, numberOr(raw.startedAt, 0))),
@@ -236,6 +269,10 @@ function blankCard(sessionId: string, cwd: string): BoardCard {
 
 function cardPath(dir: string, sessionId: string): string {
   return `${dir}/role-board/cards/${sessionId}.json`
+}
+
+function screenPath(dir: string, id: string): string {
+  return `${dir}/role-board/screens/${id}.json`
 }
 
 // "改 player.gd", "跑 Run the tests", "搜 damage"
@@ -341,9 +378,58 @@ function lookOf(row: BoardRow): Look {
   return row.state === 'idle' && row.isDone ? LOOKS.done : LOOKS[row.state]
 }
 
-// A row's second line: a wait in the warning color, work plain, the rest dim.
-function toneOf(row: BoardRow) {
-  return row.state === 'waiting' ? { color: LOOKS.waiting.color } : row.state === 'idle' ? { dimColor: true } : {}
+// A row's second line: a wait in the warning tone, work plain, the rest muted.
+function statusSpan(row: BoardRow): BoardSpan {
+  const text = `  ${row.status}`
+
+  return row.state === 'waiting' ? { text, tone: 'warning' } : row.state === 'idle' ? { text, tone: 'muted' } : { text }
+}
+
+// The board, line by line: the folder, each of its conversations, then the
+// conversations of the other folders.
+function linesOf(view: NonNullable<BoardView>): BoardLine[] {
+  const lines: BoardLine[] = [
+    {
+      left: [
+        { text: `${FOLDER_LOOK.icon} `, tone: FOLDER_LOOK.tone },
+        { text: view.folder, tone: 'strong' },
+        { text: `  ${view.rows.length} 个对话`, tone: 'muted' },
+      ],
+    },
+  ]
+
+  for (const row of view.rows) {
+    const look = lookOf(row)
+    lines.push({ left: [] })
+    lines.push({
+      left: [
+        { text: `${look.icon} `, tone: look.tone },
+        { text: row.name, tone: row.isNamed ? 'strong' : 'muted' },
+        ...(row.isSelf ? [{ text: ' · 这里', tone: 'muted' as const }] : []),
+      ],
+      right: [{ text: row.since, tone: 'muted' }],
+    })
+    lines.push({ left: [statusSpan(row)] })
+
+    if (row.task !== null) {
+      lines.push({ left: [{ text: `  ▸ ${row.task}`, tone: 'muted' }] })
+    }
+
+    if (row.isSelf && !row.isNamed) {
+      lines.push({ left: [{ text: '  /rename 起个职责名', tone: 'muted' }] })
+    }
+  }
+
+  if (view.others.length > 0) {
+    lines.push({ left: [] })
+    lines.push({ left: [{ text: '其他文件夹', tone: 'muted' }] })
+
+    for (const other of view.others) {
+      lines.push({ left: [{ text: `${LOOKS[other.state].icon} ${other.name} · ${other.folder}`, tone: 'muted' }] })
+    }
+  }
+
+  return lines
 }
 
 // Claude Code's configuration folder: where the sessions register, and where
@@ -507,6 +593,36 @@ async function showDoing($: EngineInterface, watch: Watch) {
   await changeCard($, watch, held => ({ ...held, doing: newest }))
 }
 
+// Writes the screen this session's terminal panes draw, once /board opened
+// one: when the board changes, and every so often so they see it is alive.
+async function writeScreen(
+  $: EngineInterface,
+  watch: Watch,
+  view: BoardView,
+  { isEnded = false, isForced = false }: { isEnded?: boolean; isForced?: boolean } = {},
+) {
+  const id = await read($, boardId)
+
+  if (id === null || watch.dir === undefined) {
+    return
+  }
+
+  try {
+    const lines = view === null ? [{ left: [{ text: '读取中…', tone: 'muted' as const }] }] : linesOf(view)
+    const shown = JSON.stringify({ lines, isEnded })
+    const at = await $.clock.now()
+
+    if (isForced || shown !== watch.screenShown || at - watch.screenAt >= SCREEN_BEAT_MS) {
+      const screen: BoardScreen = { at, ended: isEnded, lines, hint: HINT, staleNote: STALE_NOTE }
+      await $.fs.write(screenPath(watch.dir, id), JSON.stringify(screen))
+      watch.screenShown = shown
+      watch.screenAt = at
+    }
+  } catch (error) {
+    $.ui.log(`screen write failed: ${String(error)}`, { to: 'debug' })
+  }
+}
+
 // Toasts when another conversation of the folder starts waiting for the
 // person, or ends its turn. A turn whose card has not caught up is told on a
 // later refresh, with its answer.
@@ -549,22 +665,6 @@ async function show($: EngineInterface, watch: Watch, view: BoardView) {
   }
 }
 
-// The pane opens by itself, once a session, when another conversation shares
-// the folder and the pane would sit beside the transcript; never after the
-// person closed it.
-async function openUnasked($: EngineInterface, watch: Watch, rows: readonly BoardRow[]) {
-  if (!watch.isFullscreen || !rows.some(row => !row.isSelf)) {
-    return
-  }
-
-  if ((await read($, hasOpened)) || (await read($, isDismissed))) {
-    return
-  }
-
-  await update($, hasOpened, () => true)
-  await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
-}
-
 async function refresh($: EngineInterface, watch: Watch) {
   const { dir } = watch
 
@@ -595,20 +695,20 @@ async function refresh($: EngineInterface, watch: Watch) {
     const built = mine.map(entry =>
       entry === self ? rowOf(entry, own, true, now) : rowOf(entry, cards.get(entry.sessionId), false, now),
     )
-    const rows = built.map(({ row }) => row)
-
-    toastChanges($, watch, built)
-    await show($, watch, {
+    const view: BoardView = {
       folder: baseName(cwd),
-      rows,
+      rows: built.map(({ row }) => row),
       others: theirs.map(entry => ({
         sessionId: entry.sessionId,
         name: entry.name,
         folder: baseName(entry.cwd),
         state: stateOf(entry),
       })),
-    })
-    await openUnasked($, watch, rows)
+    }
+
+    toastChanges($, watch, built)
+    await show($, watch, view)
+    await writeScreen($, watch, view)
   } catch (error) {
     $.ui.log(`refresh failed: ${String(error)}`, { to: 'debug' })
   } finally {
@@ -616,14 +716,74 @@ async function refresh($: EngineInterface, watch: Watch) {
   }
 }
 
+// Splits the conversation's Windows Terminal pane: the board on the right,
+// drawn by the script the plugin ships, and the focus back on the left.
+// Says why when it could not.
+async function openSplit($: EngineInterface, watch: Watch): Promise<string | undefined> {
+  const { dir } = watch
+
+  if (dir === undefined) {
+    return '找不到 Claude Code 的配置目录'
+  }
+
+  const script = windowsPath(`${$.plugin.root}/board/board.ps1`)
+
+  if (!(await $.fs.exists(script))) {
+    return `插件里缺少 ${script}`
+  }
+
+  const id = (await read($, boardId)) ?? (await $.session.id())
+  await update($, boardId, () => id)
+  await writeScreen($, watch, await read($, board), { isForced: true })
+
+  const { exitCode, stderr } = await $.process.run([
+    'wt.exe',
+    '-w',
+    '0',
+    'split-pane',
+    '-V',
+    '--size',
+    SPLIT_SIZE,
+    'powershell.exe',
+    '-NoLogo',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    script,
+    '-Screen',
+    windowsPath(screenPath(dir, id)),
+    ';',
+    'move-focus',
+    'left',
+  ])
+
+  return exitCode === 0 ? undefined : `wt.exe 退出码 ${exitCode}${stderr.trim() === '' ? '' : `：${stderr.trim()}`}`
+}
+
+// Claude Code's own pane, where no terminal split can be had: /board opens
+// it, or closes it while it shows.
+async function togglePane($: EngineInterface): Promise<string> {
+  const pane = (await $.ui.panes()).find(one => one.id === PANE)
+
+  if (pane?.isPlaced === true) {
+    await $.ui.close({ id: PANE })
+
+    return '职责面板已关闭，/board 再打开。'
+  }
+
+  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
+
+  return opened.isPlaced ? '职责面板已打开。' : `职责面板还没摆出来：${opened.reason}`
+}
+
 async function boot($: EngineInterface, watch: Watch) {
   try {
     await $.command.register({
       name: 'board',
-      description: '职责面板：这个文件夹里的每个对话在做什么、是否在等你（再输入一次关闭）',
+      description: '职责面板：在右侧分屏显示这个文件夹里每个对话在做什么、是否在等你',
     })
     watch.dir = await configDir($)
-    watch.isFullscreen = (await $.settings.read()).tui === 'fullscreen'
     await changeCard($, watch, held => held)
   } catch (error) {
     $.ui.log(`start failed: ${String(error)}`, { to: 'debug' })
@@ -644,7 +804,6 @@ export const register: Register = on => {
     isRunning: false,
     isRefreshing: false,
     isWriteDue: false,
-    isFullscreen: false,
     dir: undefined,
     entries: new Map(),
     alive: undefined,
@@ -653,6 +812,8 @@ export const register: Register = on => {
     ownPid: undefined,
     states: undefined,
     shown: undefined,
+    screenShown: undefined,
+    screenAt: 0,
     calls: new Map(),
     callSeq: 0,
   }
@@ -667,31 +828,20 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // /board opens the pane, or closes it while it shows.
+  // /board splits the terminal in Windows Terminal; anywhere else it opens
+  // or closes Claude Code's own pane.
   on('command.run', { command: 'board' }, async $ => {
-    const pane = (await $.ui.panes()).find(one => one.id === PANE)
+    if ((await $.env.get('WT_SESSION')) !== undefined) {
+      const failure = await openSplit($, watch)
 
-    if (pane?.isPlaced === true) {
-      await update($, isDismissed, () => true)
-      await $.ui.close({ id: PANE })
+      if (failure === undefined) {
+        return { text: '职责面板已在右侧分屏打开，在面板里按 q 关闭。' }
+      }
 
-      return { text: '职责面板已关闭，/board 再打开。' }
+      return { text: `${failure}。改用 Claude Code 自己的面板：${await togglePane($)}` }
     }
 
-    await update($, isDismissed, () => false)
-    await update($, hasOpened, () => true)
-    const opened = await $.ui.open({ id: PANE, title: TITLE, columns: PANE_COLUMNS })
-
-    return { text: opened.isPlaced ? '职责面板已打开。' : `职责面板还没摆出来：${opened.reason}` }
-  })
-
-  // Closed by the person, the pane stays closed until /board.
-  on('ui.close', async ($, e, next) => {
-    if (e.id === PANE && e.origin.kind === 'person') {
-      await update($, isDismissed, () => true)
-    }
-
-    return next(e)
+    return { text: await togglePane($) }
   })
 
   // The person's own prompt is the conversation's task, by its first line.
@@ -754,12 +904,15 @@ export const register: Register = on => {
     return completed
   })
 
-  // /clear goes on under a new session id: its card starts blank.
+  // /clear goes on under a new session id: its card starts blank. Leaving
+  // the conversation closes its terminal panes.
   on('session.end', async ($, e, next) => {
     const ended = await next(e)
 
     if (e.reason === 'clear') {
       $.clock.after(SETTLE_MS, () => void changeCard($, watch, held => held))
+    } else if (e.reason !== 'resume') {
+      await writeScreen($, watch, await read($, board), { isEnded: true, isForced: true })
     }
 
     return ended
@@ -773,40 +926,23 @@ export const register: Register = on => {
       return <Text dimColor>读取中…</Text>
     }
 
+    const draw = (spans: readonly BoardSpan[]) =>
+      spans.map(span => <Text {...(span.tone === undefined ? {} : TONE_STYLES[span.tone])}>{span.text}</Text>)
+
     return (
       <Box flexDirection="column">
-        <Text wrap="truncate">
-          <Text color={FOLDER_LOOK.color}>{`${FOLDER_LOOK.icon} `}</Text>
-          <Text bold>{view.folder}</Text>
-          <Text dimColor>{`  ${view.rows.length} 个对话`}</Text>
-        </Text>
-        {view.rows.map(row => (
-          <Box key={row.sessionId} flexDirection="column" marginTop={1}>
-            <Box flexDirection="row">
-              <Box flexGrow={1} flexShrink={1} overflow="hidden">
-                <Text wrap="truncate">
-                  <Text color={lookOf(row).color}>{`${lookOf(row).icon} `}</Text>
-                  {row.isNamed ? <Text bold>{row.name}</Text> : <Text dimColor>{row.name}</Text>}
-                  {row.isSelf && <Text dimColor>{' · 这里'}</Text>}
-                </Text>
-              </Box>
-              <Box flexShrink={0} marginLeft={1}>
-                <Text dimColor>{row.since}</Text>
-              </Box>
+        {linesOf(view).map((line, index) => (
+          <Box key={`line-${index}`} flexDirection="row">
+            <Box flexGrow={1} flexShrink={1} overflow="hidden">
+              <Text wrap="truncate">{line.left.length > 0 ? draw(line.left) : ' '}</Text>
             </Box>
-            <Text wrap="truncate" {...toneOf(row)}>{`  ${row.status}`}</Text>
-            {row.task !== null && <Text wrap="truncate" dimColor>{`  ▸ ${row.task}`}</Text>}
-            {row.isSelf && !row.isNamed && <Text wrap="truncate" dimColor>{'  /rename 起个职责名'}</Text>}
+            {line.right !== undefined && (
+              <Box flexShrink={0} marginLeft={1}>
+                <Text>{draw(line.right)}</Text>
+              </Box>
+            )}
           </Box>
         ))}
-        {view.others.length > 0 && (
-          <Box key="others" flexDirection="column" marginTop={1}>
-            <Text dimColor>其他文件夹</Text>
-            {view.others.map(other => (
-              <Text wrap="truncate" dimColor>{`${LOOKS[other.state].icon} ${other.name} · ${other.folder}`}</Text>
-            ))}
-          </Box>
-        )}
       </Box>
     )
   })

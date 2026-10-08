@@ -15,7 +15,7 @@
     {
       "name": "role-board",
       "source": "./plugins/role-board",
-      "description": "A pane beside the transcript: every conversation in this folder by the role you named it, what it is doing, and whether it waits for you"
+      "description": "/board splits Windows Terminal: every conversation in this folder by the role you named it, what it is doing, and whether it waits for you"
     }
   ]
 }
