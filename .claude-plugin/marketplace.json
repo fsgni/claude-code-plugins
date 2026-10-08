@@ -11,11 +11,6 @@
       "name": "context-meter",
       "source": "./plugins/context-meter",
       "description": "A colored row above the prompt: the context window's fill and the plan's usage limits on the left, the model and its effort on the right, as Nerd Font icons"
-    },
-    {
-      "name": "role-board",
-      "source": "./plugins/role-board",
-      "description": "/board splits Windows Terminal: every conversation in this folder by the role you named it, what it is doing, and whether it waits for you"
     }
   ]
 }
