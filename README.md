@@ -53,3 +53,32 @@ claude plugin update context-meter@fsgni
 ```
 
 更新后重启 Claude Code 生效。
+
+## file-links
+
+Claude 回复里提到的文件路径会变成可以点的链接，单击就在 VS Code 里打开；带行号的（比如 `hooks/register.tsx:42`）会直接跳到那一行。
+
+- 认得出这些写法：`C:\项目\文件.md`、`~/.claude/settings.json`、Git Bash 的 `/c/...`、相对当前目录的 `plugins/x/y.ts:42`，以及反引号里单独一个文件名（比如 `README.md`）。
+- 只给真实存在的文件加链接；代码块、网址和已有的链接都不动。
+- 文件夹，以及图片、PDF、压缩包这类文件，点开后会在资源管理器里显示并选中它。
+- 只改显示，Claude 读到的原文不变。
+- 在全屏模式下（`/config` 里的 fullscreen）单击打开，需要装了 VS Code。
+
+### 安装
+
+```
+/plugin marketplace add fsgni/claude-code-plugins
+/plugin install file-links@fsgni
+/reload-plugins
+```
+
+已经加过 fsgni 市场的话，第一行可以跳过。
+
+### 更新
+
+```
+claude plugin marketplace update fsgni
+claude plugin update file-links@fsgni
+```
+
+更新后重启 Claude Code 生效。

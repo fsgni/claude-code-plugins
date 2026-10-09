@@ -11,6 +11,11 @@
       "name": "context-meter",
       "source": "./plugins/context-meter",
       "description": "A colored row above the prompt: the context window's fill and the plan's usage limits on the left, the model and its effort on the right, as Nerd Font icons"
+    },
+    {
+      "name": "file-links",
+      "source": "./plugins/file-links",
+      "description": "File paths in Claude's replies become links: a click opens the file in VS Code at the line cited, or shows a folder or a binary file in Explorer"
     }
   ]
 }

@@ -1,0 +1,7 @@
+{
+  "name": "file-links",
+  "version": "0.1.0",
+  "description": "File paths in Claude's replies become links: a click opens the file in VS Code at the line cited, or shows a folder or a binary file in Explorer",
+  "author": { "name": "fsgni" },
+  "homepage": "https://github.com/fsgni/claude-code-plugins"
+}
